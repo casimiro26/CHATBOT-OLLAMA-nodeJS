@@ -11,13 +11,14 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
 const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY;
-const WEBSITE_URL = process.env.WEBSITE_URL || 'https://ejemplo.com'; // ¡Cambia por URL real accesible!
+const WEBSITE_URL = process.env.WEBSITE_URL || 'http://localhost:5173'; // ¡Cambia por URL real accesible!
 
 app.use(express.json());
 
 // Configuración de CORS para orígenes específicos (tu frontend local)
 const allowedOrigins = [
   'http://localhost:5174',  // Tu página local
+'http://localhost:5173',  // Tu página local
   'http://localhost:3000',  // Otro puerto local si necesitas
   // Agrega más: 'https://tupagina.com'
 ];
