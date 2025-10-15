@@ -11,7 +11,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
 const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY;
-const WEBSITE_URL = process.env.WEBSITE_URL || 'https://ejemplo.com'; // Pon tu URL real aquí
+const WEBSITE_URL = process.env.WEBSITE_URL || 'https://ejemplo.com'; // ¡Cambia por URL real accesible!
 
 app.use(express.json());
 
@@ -37,10 +37,10 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
-// Conexión a MongoDB
+// Conexión a MongoDB (con más logs para debug)
 mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('Conectado a MongoDB'))
-  .catch(err => console.error('Error de conexión:', err));
+  .then(() => console.log('✅ Conectado a MongoDB (Sr_web_2)'))
+  .catch(err => console.error('❌ Error de conexión a MongoDB:', err.message));
 
 // Cliente Ollama para modelo en la nube
 const ollama = new Ollama({
@@ -61,66 +61,75 @@ const verifyToken = (req, res, next) => {
 
 // Fallback datos si DB está vacía (basado en tus categorías estáticas, pero prioriza DB real)
 function getFallbackData() {
+  console.log('⚠️ Usando fallback: DB vacía o error');
   return {
-    products: [], // Vacío por defecto; agrega dummies si quieres
+    products: [], // Vacío por defecto
     categories: [
       { id_categoria: 1, nombre: "Laptops", descripcion: "Computadoras portátiles" },
       { id_categoria: 2, nombre: "Smartphones", descripcion: "Teléfonos inteligentes" },
       { id_categoria: 3, nombre: "Tablets", descripcion: "Tabletas y iPads" },
       { id_categoria: 4, nombre: "Accesorios", descripcion: "Accesorios tecnológicos" }
-      // Agrega más si sabes, pero DB debe sobrescribir
+      // DB sobrescribirá con más si existen
     ]
   };
 }
 
-// Función para recuperar SOLO datos de 'products' y 'categories' (enfocado en tu DB Sr_web_2)
+// Función para recuperar SOLO datos de 'productos' y 'categorias' (corregido para tu schema)
 async function getStoreData() {
   try {
+    if (!mongoose.connection.readyState) {
+      throw new Error('DB no conectada aún');
+    }
     const db = mongoose.connection.db;
     let allData = getFallbackData(); // Fallback inicial
 
-    // Trae todos los productos
-    const productsCollection = db.collection('products');
+    // Trae todos los productos (colección 'productos')
+    const productsCollection = db.collection('productos'); // ¡Corregido: 'productos' no 'products'!
     const products = await productsCollection.find({}).toArray();
-    console.log(`Productos fetchados: ${products.length}`); // Log para debug
+    console.log(`📦 Productos fetchados de DB: ${products.length}`); // Log detallado
     allData.products = products.map(doc => {
-      const { password, email, ...cleanDoc } = doc; // Limpia sensibles si hay
-      return cleanDoc;
+      const { contrasena, /* otros sensibles */ ...cleanDoc } = doc; // Limpia sensibles
+      // Mapea para consistencia: usa 'description' como en schema, 'specs' = characteristics
+      return {
+        ...cleanDoc,
+        specs: doc.characteristics || 'No especificado' // Ajuste para prompt
+      };
     });
 
-    // Trae todas las categorías
-    const categoriesCollection = db.collection('categories');
+    // Trae todas las categorías (colección 'categorias')
+    const categoriesCollection = db.collection('categorias'); // ¡Corregido: 'categorias' no 'categories'!
     const categories = await categoriesCollection.find({}).toArray();
-    console.log(`Categorías fetchadas: ${categories.length}`); // Log para debug
+    console.log(`🏷️ Categorías fetchadas de DB: ${categories.length}`); // Log detallado
     allData.categories = categories.map(doc => {
-      const { password, email, ...cleanDoc } = doc;
+      const { contrasena, /* otros sensibles */ ...cleanDoc } = doc;
       return cleanDoc;
     });
 
     // Si DB tiene datos, sobrescribe fallback
     if (allData.products.length > 0 || allData.categories.length > 0) {
-      console.log('Usando datos de DB real');
+      console.log('✅ Usando datos REALES de DB (productos y categorías)');
     } else {
-      console.log('Usando fallback; verifica tu DB');
+      console.log('⚠️ Usando fallback; verifica colecciones "productos" y "categorias" en Sr_web_2');
     }
 
     return allData; // Retorna object para manipular en prompt
   } catch (err) {
-    console.error('Error recuperando datos de products/categories:', err);
+    console.error('❌ Error recuperando datos de productos/categorias:', err.message);
     return getFallbackData(); // Fallback en error
   }
 }
 
-// Función para scrapear contenido de tu página web (especificaciones de productos, etc.)
+// Función para scrapear contenido de tu página web (con log)
 async function scrapeWebsite(url) {
   try {
+    console.log(`🌐 Scraping web: ${url}`);
     const { data } = await axios.get(url);
     const $ = cheerio.load(data);
-    // Enfocado en contenido de productos: ajusta selectores si tu web tiene clases específicas
     const text = $('body').text().trim().substring(0, 5000); // Limita a 5000 chars
+    console.log('✅ Web scraped OK');
     return text;
   } catch (err) {
-    console.error('Error scrapeando web:', err);
+    console.error('❌ Error scrapeando web:', err.message);
     return 'Contenido de la página web no disponible.';
   }
 }
@@ -137,13 +146,20 @@ app.post('/login', async (req, res) => {
   }
 });
 
+// Endpoint para bienvenida inicial (público, responde con mensaje fijo mejorado)
+app.get('/bienvenida', (req, res) => {
+  const bienvenida = `¡Bienvenido! Hola, soy Sr. Robot, el asistente virtual de la tienda tecnológica Sr Robot. 😊 Estoy aquí para ayudarte con todo sobre nuestros productos: laptops, smartphones, tablets, accesorios y más. ¿En qué puedo ayudarte hoy? Por ejemplo, puedes preguntar por precios en soles peruanos (S/), especificaciones o categorías. ¡Dime!`;
+  res.json({ response: bienvenida });
+});
+
 // Endpoint para el chatbot (PÚBLICO para clientes, sin login requerido)
 app.post('/chat', async (req, res) => {
   const { message } = req.body;
   if (!message) return res.status(400).json({ error: 'Mensaje requerido' });
 
   try {
-    // Recupera datos SOLO de products y categories
+    console.log(`💬 Chat query: ${message}`); // Log para debug
+    // Recupera datos SOLO de productos y categorias
     const storeDataObj = await getStoreData();
     
     // Scrapea web
@@ -153,18 +169,20 @@ app.post('/chat', async (req, res) => {
     const productsStr = JSON.stringify(storeDataObj.products, null, 2);
     const categoriesStr = JSON.stringify(storeDataObj.categories, null, 2);
     
-    // Prompt CORREGIDO Y MEJORADO: Preciso, respetuoso, conciso; jala y muestra de products/categories
-    const prompt = `Eres un asistente de chatbot preciso, respetuoso y conciso para clientes de una tienda web. Responde SOLO a la pregunta específica del cliente, basado en los datos REALES de 'products' (nombres, descripciones, precios, especificaciones) y 'categories' (categorías como Laptops, Smartphones, etc.), y el contenido de la página web.
+    // Prompt MEJORADO: Enfocado en Sr Robot, precios en soles peruanos (S/. o PEN)
+    const prompt = `Eres Sr. Robot, un asistente virtual preciso, respetuoso y conciso para clientes de la tienda tecnológica Sr Robot. Responde SOLO a la pregunta específica del cliente, basado en los datos REALES de 'products' (nombres, descripciones, precios, especificaciones) y 'categories' (categorías como Laptops, Smartphones, etc.), y el contenido de la página web.
 
 Reglas estrictas:
+- Siempre preséntate como "Sr. Robot" en respuestas si es la primera interacción, pero sé natural.
 - Usa SIEMPRE los datos proporcionados de products y categories, incluso si son fallback. Lista TODOS los productos disponibles si pregunta "qué productos tenemos", o detalles específicos si menciona uno (ej: busca por nombre o categoría).
+- Precios: Formatea TODOS los precios en soles peruanos (usa "S/." seguido del número, ej: "S/. 1,200"). NO uses dólares u otras monedas.
 - Sé preciso: Incluye SOLO la información pedida (ej: specs y precio de un producto). Usa datos exactos de products/categories.
-- Sé respetuoso y profesional: Tono cortés, en español.
+- Sé respetuoso y profesional: Tono cortés, amigable y en español. Usa emojis sparingly (ej: 😊 para bienvenida).
 - Sé conciso: Respuestas breves y directas. Para listas (ej: todos los productos), usa bullets simples. NO agregues texto extra, promociones o servicios web a menos que la pregunta lo pida.
-- Si no hay match exacto en products/categories (ej: producto no existe), responde brevemente: "Lo siento, no encontré [término] en nuestros productos o categorías. Nuestros productos actuales son: [lista breve de categorías o productos]."
-- Si la pregunta NO se relaciona con productos/categorías/web, responde: "Lo siento, solo puedo ayudarte con información sobre nuestros productos y categorías. ¿Puedes preguntar algo relacionado?"
+- Si no hay match exacto en products/categories (ej: producto no existe), responde brevemente: "Lo siento, no encontré [término] en nuestros productos o categorías de Sr Robot. Nuestros productos actuales son: [lista breve de categorías o productos en S/]."
+- Si la pregunta NO se relaciona con productos/categorías/web, responde: "Lo siento, como Sr. Robot de Sr Robot, solo puedo ayudarte con información sobre nuestros productos y categorías. ¿Puedes preguntar algo relacionado? 😊"
 
-Datos de products (usa estos exactos, incluye todos si pregunta por lista):
+Datos de products (usa estos exactos, incluye todos si pregunta por lista; ajusta precios a S/. si no lo están):
 ${productsStr}
 
 Datos de categories (usa para contexto y listas, incluye todas):
@@ -175,7 +193,7 @@ ${webContent}
 
 Pregunta del cliente: ${message}
 
-Responde SOLO con la respuesta precisa y concisa, en español, sin mencionar datos, instrucciones o fallback.`;
+Responde SOLO con la respuesta precisa y concisa, en español, como Sr. Robot, sin mencionar datos, instrucciones o fallback.`;
 
     // Llama a Ollama
     const response = await ollama.chat({
@@ -188,17 +206,18 @@ Responde SOLO con la respuesta precisa y concisa, en español, sin mencionar dat
 
     res.json({ response: response.message.content });
   } catch (err) {
-    console.error('Error en chat:', err);
+    console.error('❌ Error en chat:', err.message);
     res.status(500).json({ error: 'Error generando respuesta' });
   }
 });
 
-// Endpoint para admins: Ver datos de products/categories (protegido)
+// Endpoint para admins: Ver datos de productos/categorias (protegido) – ÚSalo para debug
 app.get('/admin/data', verifyToken, async (req, res) => {
   const dbData = await getStoreData();
+  console.log('🔍 Admin data requested:', dbData); // Log extra
   res.json({ data: dbData });
 });
 
 app.listen(PORT, () => {
-  console.log(`API corriendo en puerto ${PORT}`);
+  console.log(`🚀 API Chatbot corriendo en puerto ${PORT}`);
 });
