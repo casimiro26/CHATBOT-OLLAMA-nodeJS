@@ -52,40 +52,21 @@ mongoose
 const STORE_INFO = {
   ubicacion: "Huánuco",
   direccion:
-    "Jr. Ayacucho N.º 574, oficina 4, galería Millenium, a media cuadra del Mercado Modelo de Huánuco. Y sí, ¡estamos en el mejor clima del mundo: la región de Huánuco!",
-  horario: "Lunes a sábado, de 8:00 a.m. a 8:00 p.m.",
-  contactos: {
-    productos: "923 389 988",
-    servicio: "975 167 294",
-  },
-  sobre: "Soy Sr. Robot, una tienda tecnológica dedicada a ofrecer productos originales y servicios de soporte técnico confiables.",
-  servicios: [
-    "Reparación de hardware",
-    "Reparación de software",
-    "Instalación de programas",
-    "Asesoría tecnológica personalizada",
-  ],
+    "Jirón Ayacucho Huánuco 574, Huánuco, Huánuco 10000. A media cuadra del Mercado Modelo.",
   garantias: {
     "Pantallas de laptops": "4 meses",
     Impresoras: "8 meses",
     Laptops: "1 año",
-    "PC": "1 año",
+    "PC (computadoras de escritorio)": "1 año",
     Teclados: "2 meses",
     Mouse: "2 meses",
     Coolers: "2 meses",
-    Baterías: "3 meses",
+    "Baterías para laptops": "3 meses",
     Cables: "1 mes",
-    Cargadores: "1 mes",
-    "Placas y componentes": "1 mes",
-    "Otros componentes": "2 meses",
-    // === NUEVAS GARANTÍAS ===
-    Audífonos: "3 meses",
-    Parlantes: "6 meses",
-    "Memorias USB/SSD": "6 meses",
-    "Ventiladores USB": "1 mes",
+    "Cargadores de laptops": "1 mes",
+    "Placas y otros componentes de laptops": "1 mes",
+    "Otros componentes generales": "2 meses",
   },
-  garantia_explicacion:
-    "La garantía cubre fallas de fábrica. Si el producto tiene golpes, caídas o daños por mal uso, no se cubre. Pero si falla sin daños físicos, será atendido correctamente y sin costo.",
 };
 
 // === FALLBACK DATA ===
@@ -94,10 +75,22 @@ function getFallbackData() {
   return {
     products: [],
     categories: [
-      { id_categoria: 1, nombre: "Laptops", descripcion: "Computadoras portátiles" },
-      { id_categoria: 2, nombre: "Smartphones", descripcion: "Teléfonos inteligentes" },
+      {
+        id_categoria: 1,
+        nombre: "Laptops",
+        descripcion: "Computadoras portátiles",
+      },
+      {
+        id_categoria: 2,
+        nombre: "Smartphones",
+        descripcion: "Teléfonos inteligentes",
+      },
       { id_categoria: 3, nombre: "Tablets", descripcion: "Tabletas y iPads" },
-      { id_categoria: 4, nombre: "Accesorios", descripcion: "Accesorios tecnológicos" },
+      {
+        id_categoria: 4,
+        nombre: "Accesorios",
+        descripcion: "Accesorios tecnológicos",
+      },
     ],
   };
 }
@@ -163,7 +156,7 @@ const verifyToken = (req, res, next) => {
   });
 };
 
-// === LLAMADA A OLLAMA CLOUD ===
+// === LLAMADA A OLLAMA CLOUD (CORRECTA: /api/generate) ===
 async function callOllama(prompt) {
   if (!OLLAMA_API_KEY) throw new Error("OLLAMA_API_KEY no configurada");
   if (!OLLAMA_MODEL) throw new Error("OLLAMA_MODEL no configurado");
@@ -177,7 +170,7 @@ async function callOllama(prompt) {
         stream: false,
         options: {
           temperature: 0.7,
-          num_predict: 600,
+          num_predict: 500,
         },
       },
       {
@@ -185,7 +178,7 @@ async function callOllama(prompt) {
           Authorization: `Bearer ${OLLAMA_API_KEY}`,
           "Content-Type": "application/json",
         },
-        timeout: 120000,
+        timeout: 120000, // 120 segundos (480b-cloud es lento)
       }
     );
 
@@ -199,21 +192,18 @@ async function callOllama(prompt) {
   }
 }
 
-// === HISTORIAL POR SESIÓN (memoria ligera) ===
-const chatHistory = new Map(); // { sessionId: { name: "Jhan", greeted: true, context: [...] } }
-
 // === ENDPOINTS ===
 
 // 1. Bienvenida
 app.get("/bienvenida", (req, res) => {
   res.json({
-    response: `¡Hola! Soy Sr. Robot, tu asesor tecnológico número 1 en productos originales. ¿Cómo te puedo apoyar hoy?`,
+    response: `¡Hola! Soy Sr. Robot, tu asistente en Sr Robot Huánuco. Te ayudo con productos, precios en S/., imágenes y garantías. ¿Qué necesitas?`,
   });
 });
 
 // 2. Chatbot
 app.post("/chat", async (req, res) => {
-  const { message, sessionId = "default" } = req.body;
+  const { message } = req.body;
   if (!message || typeof message !== "string") {
     return res.status(400).json({ error: "Mensaje requerido" });
   }
@@ -222,60 +212,37 @@ app.post("/chat", async (req, res) => {
     const storeData = await getStoreData();
     const webContent = await scrapeWebsite(WEBSITE_URL);
 
-    // === GESTIÓN DE SESIÓN ===
-    if (!chatHistory.has(sessionId)) {
-      chatHistory.set(sessionId, { name: null, greeted: false, context: [] });
-    }
-    const session = chatHistory.get(sessionId);
+    const prompt = `Eres Sr. Robot, asistente de Sr Robot en Huánuco.
+REGLAS:
+- Usa SOLO datos reales de productos.
+- Precios en S/.
+- Si piden imagen → "Aquí tienes las imágenes adjuntas."
+- Si piden todos → lista breve: nombre + precio + (ver imagen).
+- Si no existe → "Lo siento, no tengo ese producto."
+- Máximo 3 líneas.
+- 1 emoji al inicio.
+- Español claro.
 
-    // === DETECTAR NOMBRE ===
-    const nameMatch = message.match(/(?:hola|hi|buenas).*\bsoy\s+([A-Za-zÁÉÍÓÚáéíóúñÑ]+)/i);
-    if (nameMatch && !session.greeted) {
-      session.name = nameMatch[1].trim();
-      session.greeted = true;
-    }
+Datos:
+Productos: ${JSON.stringify(
+      storeData.products.slice(0, 30),
+      null,
+      2
+    )}  // Solo 30 para no saturar
+Categorías: ${JSON.stringify(storeData.categories, null, 2)}
+Garantías: ${JSON.stringify(STORE_INFO.garantias, null, 2)}
+Dirección: ${STORE_INFO.direccion}
+Web: ${webContent.substring(0, 600)}...
 
-    // === PROMPT COMPLETO (Sr. Robot) ===
-    const prompt = `Eres "Sr. Robot", asistente de una tienda tecnológica en Huánuco.
+Pregunta: ${message}
 
-${session.greeted ? `El usuario se llama "${session.name}". Ya saludaste, NO repitas el saludo.` : `Si dice "Hola soy [Nombre]", saluda solo una vez con su nombre.`}
-
-REGLAS ESTRICTAS:
-- Solo usa datos reales de productos, categorías, precios, garantías.
-- Corrige errores de escritura: "lapto" → laptop, "caragador" → cargador, etc.
-- Si no existe el producto → “Lo siento, por ahora no tengo información sobre ese producto. ¿Deseas que te muestre otra categoría disponible?”
-- Usa emojis suaves, tono cálido, frases cortas.
-- Humor ligero si el usuario bromea.
-- NO repitas saludos.
-
-INFORMACIÓN DE LA TIENDA:
-- Dirección: ${STORE_INFO.direccion}
-- Horario: ${STORE_INFO.horario}
-- Productos: ${STORE_INFO.contactos.productos}
-- Servicio técnico: ${STORE_INFO.contactos.servicio}
-- Sobre nosotros: ${STORE_INFO.sobre}
-- Servicios: ${STORE_INFO.servicios.join(", ")}
-- Garantías: ${JSON.stringify(STORE_INFO.garantias, null, 2)}
-- Cómo funciona garantía: "${STORE_INFO.garantia_explicacion}"
-- Envíos: “Hacemos envíos a todo Huánuco y regiones cercanas. Costo según distancia, consulta al 923 389 988.”
-- Fotos: “Puedo enviarte fotos reales por WhatsApp. ¿Me das tu número o el modelo exacto?”
-
-PRODUCTOS (máx 30):
-${JSON.stringify(storeData.products.slice(0, 30), null, 2)}
-
-CATEGORÍAS:
-${JSON.stringify(storeData.categories, null, 2)}
-
-PREGUNTA DEL USUARIO: "${message}"
-
-Respuesta (máx 3 líneas, 1 emoji al inicio):`;
+Respuesta:`;
 
     const botResponse = await callOllama(prompt);
 
-    // === IMÁGENES ===
     let images = [];
     let showImages = false;
-    const wantsImage = /imagen|foto|ver|muestra|mostrar|visual|foto|photo/i.test(message);
+    const wantsImage = /imagen|foto|ver|muestra|mostrar|visual/i.test(message);
     const wantsAll = /todos.*(producto|lista|cat[áa]logo)/i.test(message);
 
     if (wantsImage || wantsAll) {
@@ -286,10 +253,6 @@ Respuesta (máx 3 líneas, 1 emoji al inicio):`;
       showImages = true;
     }
 
-    // === GUARDAR CONTEXTO ===
-    session.context.push({ user: message, bot: botResponse });
-    if (session.context.length > 5) session.context.shift();
-
     res.json({
       response: botResponse,
       images,
@@ -297,8 +260,6 @@ Respuesta (máx 3 líneas, 1 emoji al inicio):`;
       storeInfo: {
         ubicacion: STORE_INFO.ubicacion,
         direccion: STORE_INFO.direccion,
-        horario: STORE_INFO.horario,
-        contactos: STORE_INFO.contactos,
       },
     });
   } catch (err) {
@@ -367,8 +328,7 @@ app.get("/tienda", (req, res) => {
     nombre: "Sr Robot",
     ubicacion: STORE_INFO.ubicacion,
     direccion: STORE_INFO.direccion,
-    horario: STORE_INFO.horario,
-    contactos: STORE_INFO.contactos,
+    horario: "Lun-Sáb: 9:00 AM - 7:00 PM",
   });
 });
 
